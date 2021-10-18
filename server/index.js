@@ -21,7 +21,6 @@ app.use(express.json());
 
 const categoriesSchema = Joi.object({
   name: Joi.string().min(1).max(30).required(),
-  id: Joi.number().min(1).required()
 })
 
 const gamesSchema = Joi.object({
@@ -44,7 +43,7 @@ const customersSchema = Joi.object({
 const rentalsSchema = Joi.object({
   customerId: Joi.number().required(),
   gameId: Joi.number().required(),
-  daysRented: Joi.number().required(),
+  daysRented: Joi.number().min(1).required(),
 })
 
 //-----------------------***************----------------------CATEGORIES--------***********************************-----------------//
@@ -59,10 +58,8 @@ app.get('/categories', async (req, res) => {
 });
 
 app.post('/categories', async (req, res) => {
-    const { name, id } = req.body;
-
-    const categoriesData = { name, id }     
-
+    const { name } = req.body;
+    const categoriesData = { name }    
     const { error, value } = categoriesSchema.validate(categoriesData)
     if (error){
       return res.sendStatus(400);
@@ -138,9 +135,21 @@ app.get('/customers', async (req, res) => {
   try{
     if (!cpf || cpf.length === 0){       
       const result = await connection.query('SELECT * FROM customers')
+
+      result.rows = result.rows.map(value => ({
+        ...value,
+        birthday: new Date(value.birthday).toLocaleDateString('en-CA')
+      }))  
+
         return res.send(result.rows);
     } else {
       const result = await connection.query('SELECT * FROM customers WHERE cpf ilike($1)', [`${cpf}%`])
+
+      result.rows = result.rows.map(value => ({
+        ...value,
+        birthday: new Date(value.birthday).toLocaleDateString('en-CA')
+      }))  
+
       return res.send(result.rows);
     }
   } catch {
@@ -154,6 +163,12 @@ app.get('/customers/:id', async (req, res) => {
   try{    
     const result = await connection.query('SELECT * FROM customers WHERE id = $1;', [id])
     if(result.rows.length){
+
+        result.rows = result.rows.map(value => ({
+          ...value,
+          birthday: new Date(value.birthday).toLocaleDateString('en-CA')
+        }))   
+
       return res.send(result.rows[0]);
     } else {
       return res.sendStatus(404)
@@ -211,12 +226,17 @@ app.put('/customers/:id', async (req, res) => {
     return res.sendStatus(400);    
   }
 
-  try{    
-    const result = await connection.query('UPDATE customers SET name = $1, phone = $2, cpf = $3, birthday = $4 WHERE id = $5;', [name, phone, cpf, birthday, id])
+  try{
+    const resultCPF = await connection.query('SELECT cpf FROM customers WHERE cpf = $1;', [cpf])
+      if(resultCPF.rows.length){
+        return res.sendStatus(409) 
+      } else {
+        const result = await connection.query('UPDATE customers SET name = $1, phone = $2, cpf = $3, birthday = $4 WHERE id = $5;', [name, phone, cpf, birthday, id])
       res.sendStatus(200);
-  } catch (error) {
-    return res.sendStatus(500)
-  } 
+      }
+  } catch {
+    res.sendStatus(500)
+  }  
 });
 
 //-----------------------***************---------------------ALUGUEL---------***********************************-----------------//
@@ -361,7 +381,7 @@ app.get('/rentals', async (req, res) => {
           gameId: r.gameId,
           rentDate: new Date(r.rentDate).toLocaleDateString('en-CA'),
           daysRented: r.daysRented,
-          returnDate: r.returnDate,
+          returnDate: (r.returnDate != null) ? (new Date(r.returnDate).toLocaleDateString('en-CA')) : null,
           originalPrice: r.originalPrice,
           delayFee: r.delayFee,
           customer: {
@@ -389,7 +409,22 @@ app.post('/rentals/:id/return', async (req, res) => {
   let id = req.params.id;
   let finalDate = new Date().toLocaleDateString('en-US');
   let finalDateConverted = new Date().toLocaleDateString('en-CA');
-  let inicialDateConverted, days, dalayFee, daysRented, gameId, pricePerDay
+  let inicialDateConverted, days, dalayFee, daysRented, gameId, pricePerDay  
+
+  try{
+    const result = await connection.query('SELECT id FROM rentals WHERE id = $1;', [id])
+    if(result.rows.length){
+      const result = await connection.query('SELECT "returnDate" FROM rentals WHERE id = $1;', [id])
+      console.log(result.rows[0].returnDate)
+      if(result.rows[0].returnDate){
+        return res.sendStatus(400)
+      } 
+    } else {
+      return res.sendStatus(404)
+    }  
+  } catch{
+    res.sendStatus(500)
+  } 
 
   try{
     const result = await connection.query('SELECT "rentDate", "gameId", "daysRented" FROM rentals WHERE id = $1;', [id])
