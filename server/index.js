@@ -41,6 +41,12 @@ const customersSchema = Joi.object({
   birthday: extendedJoi.date().format('YYYY-MM-DD')
 })
 
+const rentalsSchema = Joi.object({
+  customerId: Joi.number().required(),
+  gameId: Joi.number().required(),
+  daysRented: Joi.number().required(),
+})
+
 //-----------------------***************----------------------CATEGORIES--------***********************************-----------------//
 app.get('/categories', async (req, res) => {
 
@@ -217,16 +223,37 @@ app.put('/customers/:id', async (req, res) => {
 
 app.post('/rentals', async (req, res) =>{
   const { customerId, gameId, daysRented } = req.body;
+  const rentalsData = { customerId, gameId, daysRented } 
+  const { error, value } = rentalsSchema.validate(rentalsData)
+  if (error){
+    return res.sendStatus(400);
+  }
 
   let date = new Date().toLocaleDateString('en-CA');
   let rentDate = date;
   let originalPrice = 0;
   let stock = 0;
-  let openRents = 0;
+  let openRents = 0;  
 
-  //Date (). toLocaleDateString ('en-CA') pra n retornar os numeros
+  //verificar se gameId se refere a um jogo existente.
+  try{
+    const result = await connection.query('SELECT id FROM games WHERE id = $1;', [gameId])
+    if(!result.rows[0]){
+      return res.sendStatus(400)
+    }
+  } catch {
+    res.sendStatus(500)
+  }
 
-  //daysRented deve ser um número maior que 0. Se não, deve responder com status 400
+  //verificar se customerId se refere a um cliente existente. Se não, deve responder com status 400
+  try{
+    const result = await connection.query('SELECT id FROM customers WHERE id = $1;', [customerId])
+    if(!result.rows[0]){
+      return res.sendStatus(400)
+    }
+  } catch {
+    res.sendStatus(500)
+  }
 
   //criando o valor de originalPrice
   try{
@@ -236,18 +263,11 @@ app.post('/rentals', async (req, res) =>{
     res.sendStatus(500)
   }   
 
-  //verificar se customerId se refere a um cliente existente. Se não, deve responder com status 400
-
-  //verificar se gameId se refere a um jogo existente. Se não, deve responder com status 400
-  //ou seja, preciso verificar se gameId é igual a algum dos Id (e não categoryId) existente em jogos 
-
-  //validar que existem jogos disponíveis, caso contrário, deve retornar status 400
+  //valida se existem jogos disponiveis
   try{
     const result = await connection.query('SELECT "stockTotal" FROM games WHERE id = $1;', [gameId]);
     stock = result.rows[0].stockTotal;
-    console.log(stock)
   } catch (error){
-    console.log("o erro tá aqui?", error)
     return res.sendStatus(500)
   } 
 
@@ -373,54 +393,54 @@ app.post('/rentals/:id/return', async (req, res) => {
 
   try{
     const result = await connection.query('SELECT "rentDate", "gameId", "daysRented" FROM rentals WHERE id = $1;', [id])
-
     daysRented =  parseInt(result.rows[0].daysRented)
     gameId = parseInt(result.rows[0].gameId)
-
     inicialDateConverted = result.rows[0].rentDate.toLocaleDateString('en-US')
     let difference = Math.abs(new Date(finalDate)-new Date(inicialDateConverted));
     days = difference/(1000 * 3600 * 24)
-
   } catch (error){
     res.sendStatus(500)
   }  
 
   try{
     const result = await connection.query('SELECT "pricePerDay" FROM games WHERE id = $1;', [gameId])
-
     pricePerDay = parseInt(result.rows[0].pricePerDay)
-
   } catch (error){
     res.sendStatus(500)
-  } 
+  }  
 
   if(days > daysRented) { 
-    dalayFee = pricePerDay * (days - daysRented) 
-    console.log("eu sou a multa", dalayFee)   
-    
-    try{
-      const result = await connection.query('UPDATE rentals SET "returnDate"= $1, "delayFee" = $2 WHERE id = $3;', [finalDateConverted, delayFee, id]);
-        res.sendStatus(200);
-    } catch (error){
-      console.log(error)
-      res.sendStatus(500)
-    }  
+    dalayFee = parseInt(pricePerDay * (days - daysRented)) 
+  } else {
+    dalayFee = 0; 
   }
 
   try{
-    const result = await connection.query('UPDATE rentals SET "returnDate" = $1 WHERE id = $2;', [finalDateConverted, id]);
+    const result = await connection.query('UPDATE rentals SET "returnDate"= $1, "delayFee" = $2 WHERE id = $3;', [finalDateConverted, dalayFee, id]);
       res.sendStatus(200);
   } catch (error){
     res.sendStatus(500)
-  }   
+  }  
+    
 });
 
 app.delete('/rentals/:id', async (req, res) => {
   let id = req.params.id;
 
   try{
-    const result = await connection.query('DELETE FROM rentals WHERE id = $1;', [id]);
-    res.sendStatus(200)
+    const result = await connection.query('SELECT id FROM rentals WHERE id = $1;', [id])
+    if(result.rows.length){
+      const result = await connection.query('SELECT "returnDate" FROM rentals WHERE id = $1;', [id])
+      console.log(result.rows[0].returnDate)
+      if(result.rows[0].returnDate){
+        return res.sendStatus(400)
+      } else {
+        const result = await connection.query('DELETE FROM rentals WHERE id = $1;', [id]);
+        return res.sendStatus(200)
+      }
+    } else {
+      return res.sendStatus(404)
+    }  
   } catch{
     res.sendStatus(500)
   } 
